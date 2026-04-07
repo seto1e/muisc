@@ -74,7 +74,6 @@ const appConfig = {
   "ver": 1,
   "name": "LXFM",
   "message": "",
-  "warning": "⚠️🤖 警告，请勿使用 ⚡️📡",
   "desc": "",
   "tabLibrary": {
     "name": "探索",
