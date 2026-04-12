@@ -1,7 +1,7 @@
 /*!
  * @name youtube-cantonese-audiobooks
  * @description 廣東話有聲書 YouTube Plugin
- * @version v1.0.0
+ * @version v1.1.0
  * @author custom
  * @key csp_yt_audiobook
  */
@@ -12,7 +12,6 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 const IOS_UA = 'com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)'
 const YT_API_KEY = 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc'
 
-// 預設搜索頻道／播放清單
 const FEATURED = [
   { id: 'search_cantonese',  name: '🎙️ 廣東話有聲書',   query: '廣東話有聲書' },
   { id: 'search_novel',      name: '📖 廣東話小說',      query: '廣東話小說朗讀' },
@@ -53,13 +52,10 @@ const appConfig = {
 }
 
 async function getConfig() {
-  try {
-    await initSession()
-  } catch (e) {}
+  try { await initSession() } catch (e) {}
   return jsonify(appConfig)
 }
 
-// 初始化 session — 取得 API key 同 context
 async function initSession() {
   try {
     const { data } = await $fetch.get('https://www.youtube.com', {
@@ -71,7 +67,6 @@ async function initSession() {
     $cache.set('yt_api_key', ytcfg.INNERTUBE_API_KEY || YT_API_KEY)
     $cache.set('yt_context', jsonify(ytcfg.INNERTUBE_CONTEXT))
   } catch (e) {
-    // fallback 用硬編碼 key
     $cache.set('yt_api_key', YT_API_KEY)
   }
 }
@@ -83,9 +78,7 @@ function getApiKey() {
 function getContext() {
   try {
     return argsify($cache.get('yt_context')) || getDefaultContext()
-  } catch (e) {
-    return getDefaultContext()
-  }
+  } catch (e) { return getDefaultContext() }
 }
 
 function getDefaultContext() {
@@ -105,14 +98,30 @@ function getSearchParam() {
     d[t++] = 0x12
     const c = t++
     d[t++] = 0x10
-    d[t++] = 1 // videos only
+    d[t++] = 1
     d[c] = t - c - 1
     const n = CryptoJS.lib.WordArray.create(d.slice(0, t))
     return encodeURIComponent(CryptoJS.enc.Base64.stringify(n))
   } catch (e) { return '' }
 }
 
-// 搜索 YouTube 影片
+// 統一建立影片卡片，ext 帶齊所有資料
+function makeCard(item) {
+  try {
+    const vid = item.videoId ?? ''
+    const name = item.title?.runs?.[0]?.text ?? ''
+    const cover = item.thumbnail?.thumbnails?.at(-1)?.url ?? ''
+    const artistName = item.ownerText?.runs?.[0]?.text ?? ''
+    return {
+      id: vid,
+      name,
+      cover,
+      artist: { id: artistName, name: artistName },
+      ext: { vid, name, cover, artistName }
+    }
+  } catch (e) { return null }
+}
+
 async function searchVideos(query, page) {
   try {
     const apiKey = getApiKey()
@@ -140,20 +149,10 @@ async function searchVideos(query, page) {
 
       items.forEach(e => {
         if (!e.videoRenderer) return
-        const item = e.videoRenderer
-        cards.push({
-          id: item.videoId,
-          name: item.title?.runs?.[0]?.text ?? '',
-          cover: item.thumbnail?.thumbnails?.at(-1)?.url ?? '',
-          artist: {
-            id: item.ownerText?.runs?.[0]?.text ?? '',
-            name: item.ownerText?.runs?.[0]?.text ?? '',
-          },
-          ext: { vid: item.videoId }
-        })
+        const card = makeCard(e.videoRenderer)
+        if (card) cards.push(card)
       })
 
-      // 儲存 continuation token
       try {
         const token = argsify(data)
           ?.contents
@@ -168,7 +167,6 @@ async function searchVideos(query, page) {
       } catch (e) {}
 
     } else {
-      // 翻頁
       const continuation = $cache.get('yt_search_token')
       if (!continuation) return []
 
@@ -188,17 +186,8 @@ async function searchVideos(query, page) {
 
       items.forEach(e => {
         if (!e.videoRenderer) return
-        const item = e.videoRenderer
-        cards.push({
-          id: item.videoId,
-          name: item.title?.runs?.[0]?.text ?? '',
-          cover: item.thumbnail?.thumbnails?.at(-1)?.url ?? '',
-          artist: {
-            id: item.ownerText?.runs?.[0]?.text ?? '',
-            name: item.ownerText?.runs?.[0]?.text ?? '',
-          },
-          ext: { vid: item.videoId }
-        })
+        const card = makeCard(e.videoRenderer)
+        if (card) cards.push(card)
       })
 
       try {
@@ -222,35 +211,33 @@ async function getPlaylists(ext) {
     const { page, gid } = argsify(ext)
     const feature = FEATURED.find(f => f.id === gid)
     if (!feature) return jsonify({ list: [] })
-
-    // 確保 session 已初始化
     if (!$cache.get('yt_api_key')) {
       try { await initSession() } catch (e) {}
     }
-
     const cards = await searchVideos(feature.query, page)
     return jsonify({ list: cards })
   } catch (e) { return jsonify({ list: [] }) }
 }
 
-// 影片卡片點入 — 直接返回單個播放項目
+// 點入影片卡片後，返回自身作為單集
 async function getSongs(ext) {
   try {
-    const { vid, name, cover } = argsify(ext)
+    const { vid, name, cover, artistName } = argsify(ext)
     if (!vid) return jsonify({ list: [] })
     return jsonify({
       list: [{
         id: vid,
         name: name ?? '播放',
         cover: cover ?? '',
-        artist: { id: '', name: '' },
+        duration: 0,
+        artist: { id: artistName ?? '', name: artistName ?? '' },
         ext: { vid }
       }]
     })
   } catch (e) { return jsonify({ list: [] }) }
 }
 
-// 取得播放 URL
+// 取得 YouTube HLS 播放串流
 async function getSongInfo(ext) {
   try {
     const { vid } = argsify(ext)
@@ -298,11 +285,9 @@ async function search(ext) {
   try {
     const { text, page } = argsify(ext)
     if (!text) return jsonify({ list: [] })
-
     if (!$cache.get('yt_api_key')) {
       try { await initSession() } catch (e) {}
     }
-
     const cards = await searchVideos(text, page)
     return jsonify({ list: cards })
   } catch (e) { return jsonify({ list: [] }) }
