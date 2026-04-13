@@ -1,7 +1,7 @@
 /*!
  * @name youtube-cantonese-audiobooks
  * @description 廣東話有聲書 YouTube Plugin
- * @version v3.0.0
+ * @version v3.1.0
  * @author custom
  * @key csp_yt_audiobook
  */
@@ -227,6 +227,7 @@ async function getPlaylists(ext) {
   } catch (e) { return jsonify({ list: [] }) }
 }
 
+// 點入影片 → 只返回一個單集
 async function getSongs(ext) {
   try {
     const { vid, name, cover, artistName } = argsify(ext)
@@ -238,12 +239,13 @@ async function getSongs(ext) {
         cover: cover ?? '',
         duration: 0,
         artist: { id: artistName ?? '', name: artistName ?? '' },
-        ext: { vid, name, cover, artistName }
+        ext: { vid }
       }]
     })
   } catch (e) { return jsonify({ list: [] }) }
 }
 
+// 取得播放 URL — HLS 優先，備用 MP4 音頻
 async function getSongInfo(ext) {
   try {
     const { vid } = argsify(ext)
@@ -281,9 +283,24 @@ async function getSongInfo(ext) {
       }
     )
 
-    const playUrl = argsify(data)?.streamingData?.hlsManifestUrl ?? ''
-    if (!playUrl) return jsonify({ urls: [] })
-    return jsonify({ urls: [playUrl] })
+    const parsed = argsify(data)
+
+    // 優先用 HLS
+    const hlsUrl = parsed?.streamingData?.hlsManifestUrl ?? ''
+    if (hlsUrl) return jsonify({ urls: [hlsUrl] })
+
+    // 備用：adaptiveFormats 最高品質音頻
+    const audioFormat = (parsed?.streamingData?.adaptiveFormats ?? [])
+      .filter(f => f.mimeType?.startsWith('audio/mp4'))
+      .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0]
+    if (audioFormat?.url) return jsonify({ urls: [audioFormat.url] })
+
+    // 再備用：普通 formats
+    const normalFormat = (parsed?.streamingData?.formats ?? [])
+      .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0]
+    if (normalFormat?.url) return jsonify({ urls: [normalFormat.url] })
+
+    return jsonify({ urls: [] })
   } catch (e) { return jsonify({ urls: [] }) }
 }
 
