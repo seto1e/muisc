@@ -1,7 +1,7 @@
 /*!
  * @name youtube-cantonese-audiobooks
  * @description 廣東話有聲書 YouTube Plugin
- * @version v2.0.0
+ * @version v2.1.0
  * @author custom
  * @key csp_yt_audiobook
  */
@@ -12,16 +12,16 @@ const IOS_UA = 'com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 15_6 like
 const YT_API_KEY = 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc'
 
 const CHANNELS = [
-  { id: 'guided_tales',      name: '🎙️ 導聽書說',      handle: '@guided_tales' },
-  { id: 'hkreadingzone',     name: '🌅 曦晨讀書會',     handle: '@hkreadingzone' },
-  { id: 'mingming',          name: '📖 名名讀書會',      handle: '@名名讀書會-廣東話' },
-  { id: 'cantoneseaudio',    name: '📚 廣東話書',        handle: '@Cantoneseaudiobook' },
-  { id: 'wesleyvillage',     name: '🏘️ 衛斯理村',       handle: '@WesleyVillage' },
-  { id: 'natetsang',         name: '🌲 松樹下說書佬',    handle: '@Natetsang825' },
-  { id: 'cantoaudiobook',    name: '👩 蘭茜夫人',        handle: '@CantoAudiobook' },
-  { id: 'aladdin',           name: '🪔 Aladdin Project', handle: '@aladdinproject155' },
-  { id: 'laoniang',          name: '🎭 老娘有聲台',      handle: '@CantonAudioBookXEndlessLove' },
-  { id: 'hkstoryteller',     name: '📜 摩登說書人',      handle: '@hkstoryteller2020' },
+  { id: 'guided_tales',   name: '🎙️ 導聽書說',       handle: '@guided_tales' },
+  { id: 'hkreadingzone',  name: '🌅 曦晨讀書會',      handle: '@hkreadingzone' },
+  { id: 'mingming',       name: '📖 名名讀書會',       handle: '@名名讀書會-廣東話' },
+  { id: 'cantoneseaudio', name: '📚 廣東話書',         handle: '@Cantoneseaudiobook' },
+  { id: 'wesleyvillage',  name: '🏘️ 衛斯理村',        handle: '@WesleyVillage' },
+  { id: 'natetsang',      name: '🌲 松樹下說書佬',     handle: '@Natetsang825' },
+  { id: 'cantoaudiobook', name: '👩 蘭茜夫人',         handle: '@CantoAudiobook' },
+  { id: 'aladdin',        name: '🪔 Aladdin Project',  handle: '@aladdinproject155' },
+  { id: 'laoniang',       name: '🎭 老娘有聲台',       handle: '@CantonAudioBookXEndlessLove' },
+  { id: 'hkstoryteller',  name: '📜 摩登說書人',       handle: '@hkstoryteller2020' },
 ]
 
 const appConfig = {
@@ -94,50 +94,66 @@ function getDefaultContext() {
   }
 }
 
-// 取得頻道 ID
+// 取得頻道 ID — 從頻道頁面抽取
 async function getChannelId(handle) {
   try {
     const url = `https://www.youtube.com/${encodeURIComponent(handle)}`
     const { data } = await $fetch.get(url, {
       headers: { 'User-Agent': UA }
     })
-    const match = data.match(/"channelId":"(UC[^"]+)"/)
-    return match ? match[1] : null
+    // 嘗試多個 pattern
+    const patterns = [
+      /"channelId":"(UC[^"]+)"/,
+      /"browseId":"(UC[^"]+)"/,
+      /channel\/(UC[^"\/]+)/,
+    ]
+    for (const p of patterns) {
+      const m = data.match(p)
+      if (m) return m[1]
+    }
+    return null
   } catch (e) { return null }
 }
 
-// 取得頻道影片列表
+// 取得頻道影片列表 — 動態搵 Videos tab
 async function getChannelVideos(handle, page) {
   try {
     const apiKey = getApiKey()
     const context = getContext()
     const cards = []
+    const cacheKey = `yt_ch_${handle}`
 
     if (page === 1) {
-      // 先取 channelId
+      $cache.set(`${cacheKey}_last`, 'false')
+      $cache.set(`${cacheKey}_token`, '')
+
       const channelId = await getChannelId(handle)
       if (!channelId) return []
-
-      $cache.set(`yt_ch_${handle}_id`, channelId)
-      $cache.set(`yt_ch_${handle}_last`, 'false')
+      $cache.set(`${cacheKey}_id`, channelId)
 
       const url = `https://www.youtube.com/youtubei/v1/browse?key=${apiKey}`
       const { data } = await $fetch.post(url, jsonify({
         context,
         browseId: channelId,
-        params: 'EgZ2aWRlb3MYAyAAMAE%3D', // videos tab
+        params: 'EgZ2aWRlb3MYAyAAMAE%3D',
       }), {
         headers: { 'User-Agent': UA, 'Content-Type': 'application/json' }
       })
 
-      const items = argsify(data)
-        ?.contents
-        ?.twoColumnBrowseResultsRenderer
-        ?.tabs?.[1]
-        ?.tabRenderer
-        ?.content
-        ?.richGridRenderer
-        ?.contents ?? []
+      const parsed = argsify(data)
+
+      // 動態搵 Videos tab，唔假設固定位置
+      const tabs = parsed?.contents?.twoColumnBrowseResultsRenderer?.tabs ?? []
+      const videoTab = tabs.find(t => {
+        const title = t?.tabRenderer?.title ?? ''
+        return title === 'Videos' || title === '影片' || title === 'Video'
+      })
+
+      const items = videoTab
+        ?.tabRenderer?.content?.richGridRenderer?.contents
+        ?? parsed?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[1]
+          ?.tabRenderer?.content?.richGridRenderer?.contents
+        ?? []
 
       items.forEach(e => {
         if (e.richItemRenderer) {
@@ -147,17 +163,14 @@ async function getChannelVideos(handle, page) {
           if (card) cards.push(card)
         } else if (e.continuationItemRenderer) {
           const token = e.continuationItemRenderer
-            ?.continuationEndpoint
-            ?.continuationCommand?.token
-          if (token) $cache.set(`yt_ch_${handle}_token`, token)
+            ?.continuationEndpoint?.continuationCommand?.token
+          if (token) $cache.set(`${cacheKey}_token`, token)
         }
       })
 
     } else {
-      const isLast = $cache.get(`yt_ch_${handle}_last`)
-      if (isLast === 'true') return []
-
-      const continuation = $cache.get(`yt_ch_${handle}_token`)
+      if ($cache.get(`${cacheKey}_last`) === 'true') return []
+      const continuation = $cache.get(`${cacheKey}_token`)
       if (!continuation) return []
 
       const url = `https://www.youtube.com/youtubei/v1/browse?prettyPrint=false`
@@ -181,13 +194,12 @@ async function getChannelVideos(handle, page) {
           if (card) cards.push(card)
         } else if (e.continuationItemRenderer) {
           const token = e.continuationItemRenderer
-            ?.continuationEndpoint
-            ?.continuationCommand?.token
-          if (token) $cache.set(`yt_ch_${handle}_token`, token)
+            ?.continuationEndpoint?.continuationCommand?.token
+          if (token) $cache.set(`${cacheKey}_token`, token)
         }
       })
 
-      if (cards.length < 10) $cache.set(`yt_ch_${handle}_last`, 'true')
+      if (cards.length < 5) $cache.set(`${cacheKey}_last`, 'true')
     }
 
     return cards
@@ -196,12 +208,12 @@ async function getChannelVideos(handle, page) {
 
 function makeCard(item) {
   try {
-    const vid = item.videoId ?? ''
+    const vid = item?.videoId ?? ''
     if (!vid) return null
-    const name = item.title?.runs?.[0]?.text ?? ''
-    const cover = item.thumbnail?.thumbnails?.at(-1)?.url ?? ''
-    const artistName = item.ownerText?.runs?.[0]?.text
-      || item.shortBylineText?.runs?.[0]?.text
+    const name = item?.title?.runs?.[0]?.text ?? ''
+    const cover = item?.thumbnail?.thumbnails?.at(-1)?.url ?? ''
+    const artistName = item?.ownerText?.runs?.[0]?.text
+      || item?.shortBylineText?.runs?.[0]?.text
       || ''
     return {
       id: vid,
@@ -228,7 +240,7 @@ async function getPlaylists(ext) {
   } catch (e) { return jsonify({ list: [] }) }
 }
 
-// 點入影片卡片 → 返回自身作為單集
+// 點入影片 → 返回自身作為單集
 async function getSongs(ext) {
   try {
     const { vid, name, cover, artistName } = argsify(ext)
