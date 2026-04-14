@@ -1,7 +1,7 @@
 /*!
  * @name youtube-cantonese-audiobooks
  * @description 廣東話有聲書 YouTube Plugin
- * @version v3.1.0
+ * @version v3.2.0
  * @author custom
  * @key csp_yt_audiobook
  */
@@ -9,7 +9,7 @@
 const $config = argsify($config_str)
 const CryptoJS = createCryptoJS()
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
-const IOS_UA = 'com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)'
+const ANDROID_UA = 'com.google.android.youtube/18.11.34 (Linux; U; Android 11)'
 const YT_API_KEY = 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc'
 
 const CHANNELS = [
@@ -227,7 +227,6 @@ async function getPlaylists(ext) {
   } catch (e) { return jsonify({ list: [] }) }
 }
 
-// 點入影片 → 只返回一個單集
 async function getSongs(ext) {
   try {
     const { vid, name, cover, artistName } = argsify(ext)
@@ -245,7 +244,7 @@ async function getSongs(ext) {
   } catch (e) { return jsonify({ list: [] }) }
 }
 
-// 取得播放 URL — HLS 優先，備用 MP4 音頻
+// Android client — 更大機會返回直接可播放 URL
 async function getSongInfo(ext) {
   try {
     const { vid } = argsify(ext)
@@ -256,10 +255,9 @@ async function getSongInfo(ext) {
       jsonify({
         context: {
           client: {
-            clientName: 'IOS',
-            clientVersion: '19.09.3',
-            deviceModel: 'iPhone14,3',
-            userAgent: IOS_UA,
+            clientName: 'ANDROID',
+            clientVersion: '18.11.34',
+            androidSdkVersion: 30,
             hl: 'zh-HK',
             timeZone: 'UTC',
             utcOffsetMinutes: 0,
@@ -274,10 +272,10 @@ async function getSongInfo(ext) {
       }),
       {
         headers: {
-          'X-YouTube-Client-Name': '5',
-          'X-YouTube-Client-Version': '19.09.3',
-          Origin: 'https://m.youtube.com',
-          'User-Agent': IOS_UA,
+          'X-YouTube-Client-Name': '3',
+          'X-YouTube-Client-Version': '18.11.34',
+          Origin: 'https://www.youtube.com',
+          'User-Agent': ANDROID_UA,
           'content-type': 'application/json',
         }
       }
@@ -285,20 +283,27 @@ async function getSongInfo(ext) {
 
     const parsed = argsify(data)
 
-    // 優先用 HLS
+    // 優先：adaptiveFormats 音頻直接 URL
+    const audioFormats = (parsed?.streamingData?.adaptiveFormats ?? [])
+      .filter(f => f.mimeType?.startsWith('audio/mp4') && f.url)
+      .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))
+
+    if (audioFormats.length > 0) {
+      return jsonify({ urls: [audioFormats[0].url] })
+    }
+
+    // 備用：普通 formats 直接 URL
+    const normalFormats = (parsed?.streamingData?.formats ?? [])
+      .filter(f => f.url)
+      .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))
+
+    if (normalFormats.length > 0) {
+      return jsonify({ urls: [normalFormats[0].url] })
+    }
+
+    // 最後備用：HLS
     const hlsUrl = parsed?.streamingData?.hlsManifestUrl ?? ''
     if (hlsUrl) return jsonify({ urls: [hlsUrl] })
-
-    // 備用：adaptiveFormats 最高品質音頻
-    const audioFormat = (parsed?.streamingData?.adaptiveFormats ?? [])
-      .filter(f => f.mimeType?.startsWith('audio/mp4'))
-      .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0]
-    if (audioFormat?.url) return jsonify({ urls: [audioFormat.url] })
-
-    // 再備用：普通 formats
-    const normalFormat = (parsed?.streamingData?.formats ?? [])
-      .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0]
-    if (normalFormat?.url) return jsonify({ urls: [normalFormat.url] })
 
     return jsonify({ urls: [] })
   } catch (e) { return jsonify({ urls: [] }) }
