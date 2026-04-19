@@ -1,207 +1,196 @@
-/*!
- * @name librivox-audiobooks
- * @description LibriVox Free Audiobooks Plugin
- * @version v1.0.0
- * @author custom
- * @key csp_librivox
- */
-
-const $config = argsify($config_str)
-const cheerio = createCheerio()
-const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
-const headers = { 'User-Agent': UA }
-const LV_API = 'https://librivox.org/api/feed/audiobooks'
-
-const GENRES = [
-  { id: 'new',       name: '🆕 最新上架',    params: 'sort_order=desc&sort_field=catalog_date' },
-  { id: 'popular',   name: '🔥 最多下載',    params: 'sort_order=desc&sort_field=listeners' },
-  { id: 'fiction',   name: '📖 小說',        params: 'genre=Fiction' },
-  { id: 'mystery',   name: '🔍 懸疑推理',    params: 'genre=Mystery+%26+Thriller' },
-  { id: 'scifi',     name: '🚀 科幻',        params: 'genre=Science+Fiction' },
-  { id: 'adventure', name: '🗺️ 冒險',        params: 'genre=Adventure' },
-  { id: 'romance',   name: '💝 浪漫',        params: 'genre=Romance' },
-  { id: 'history',   name: '🏛️ 歷史',        params: 'genre=History' },
-  { id: 'philosophy',name: '🧠 哲學',        params: 'genre=Philosophy' },
-  { id: 'religion',  name: '✝️ 宗教',        params: 'genre=Religion' },
-  { id: 'poetry',    name: '🎭 詩歌',        params: 'genre=Poetry' },
-  { id: 'children',  name: '👧 兒童',        params: 'genre=Children' },
-]
-
-const appConfig = {
-  ver: 1,
-  name: 'LibriVox',
-  message: '',
-  desc: '免費公域有聲書',
-  tabLibrary: {
-    name: '探索',
-    groups: GENRES.map(g => ({
-      name: g.name,
-      type: 'playlist',
-      ui: 1,
-      showMore: false,
-      ext: { gid: g.id }
-    }))
-  },
-  tabMe: {
-    name: '我的',
-    groups: [
-      { name: '收藏書目', type: 'playlist' },
-      { name: '收藏章節', type: 'song' },
-    ]
-  },
-  tabSearch: {
-    name: '搜索',
-    groups: [
-      { name: '書名', type: 'playlist', ext: { type: 'title' } },
-      { name: '作者', type: 'playlist', ext: { type: 'author' } },
-    ]
-  }
+// ============================================================
+// HKanime → T4 API Proxy Server
+// 供 JSTV 等播放器使⽤嘅苹果CMS T4 格式 API
+// ============================================================
+const express = require('express')
+const axios = require('axios')
+const cheerio = require('cheerio')
+const app = express()
+const PORT = process.env.PORT || 3000
+const BASE_URL = 'https://www.hkanime.com'
+// 設定 axios 預設 headers，模擬瀏覽器避免被封
+const http = axios.create({
+ baseURL: BASE_URL,
+ timeout: 15000,
+ headers: {
+ 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0. 'Referer': BASE_URL
+ }
+})
+// ============================================================
+// ⼯具函數：爬取動畫列表⾴
+// ============================================================
+async function fetchAnimeList(page = 1) {
+ try {
+ const res = await http.get('/play')
+ const $ = cheerio.load(res.data)
+ const list = []
+ // 每個動畫卡片
+ $('a[href*="/detail/"]').each((i, el) => {
+ const href = $(el).attr('href') || ''
+ const name = $(el).find('img').attr('alt') || $(el).text().trim()
+ const pic = $(el).find('img').attr('src') || ''
+ const remarks = $(el).find('.badge, .ep-count, [class*="count"]').text().trim() || ''
+ if (name && href) {
+ // 從 URL 抽取動畫 slug，例如 /detail/銀魂 → 銀魂
+ const slug = href.replace('/detail/', '').replace(/\/$/, '')
+ list.push({
+ vod_id: encodeURIComponent(slug),
+ vod_name: name,
+ vod_pic: pic.startsWith('http') ? pic : BASE_URL + pic,
+ vod_remarks: remarks,
+ vod_play_from: 'hkanime',
+ type_id: 4, // 動漫分類
+ type_name: '動漫'
+ })
+ }
+ })
+ return list
+ } catch (err) {
+ console.error('fetchAnimeList error:', err.message)
+ return []
+ }
 }
-
-async function getConfig() {
-  return jsonify(appConfig)
+// ============================================================
+// ⼯具函數：爬取動畫詳情⾴，取得集數列表
+// ============================================================
+async function fetchAnimeDetail(slug) {
+ try {
+ const decodedSlug = decodeURIComponent(slug)
+ const res = await http.get(`/detail/${decodedSlug}`)
+ const $ = cheerio.load(res.data)
+ // 動畫名稱
+ const name = $('h1, .anime-title, [class*="title"]').first().text().trim() || decodedSlug
+ // 封⾯圖片
+ const pic = $('img[class*="cover"], img[class*="poster"], .anime-cover img').first().attr // 簡介
+ const desc = $('[class*="desc"], [class*="synopsis"], .intro').first().text().trim() || ' // 集數連結：搵所有 /play/動畫名/季x集 格式嘅連結
+ const episodes = []
+ $(`a[href*="/play/${encodeURIComponent(decodedSlug)}/"], a[href*="/play/${decodedSlug}/"] const href = $(el).attr('href') || ''
+ const epName = $(el).text().trim() || `第${i + 1}集`
+ if (href.match(/\/play\/.+\/\d+x\d+/)) {
+ episodes.push({ href, epName })
+ }
+ })
+ // 將集數轉換成 T4 格式播放連結字串
+ // 格式：第1集$URL#第2集$URL#...
+ const playUrls = episodes.map(ep => {
+ const playUrl = ep.href.startsWith('http') ? ep.href : BASE_URL + ep.href
+ return `${ep.epName}$${playUrl}`
+ }).join('#')
+ return {
+ vod_id: slug,
+ vod_name: name,
+ vod_pic: pic.startsWith('http') ? pic : (pic ? BASE_URL + pic : ''),
+ vod_content: desc,
+ vod_play_from: 'hkanime',
+ vod_play_url: playUrls,
+ type_id: 4,
+ type_name: '動漫'
+ }
+ } catch (err) {
+ console.error('fetchAnimeDetail error:', err.message)
+ return null
+ }
 }
-
-function parseDuration(str) {
-  try {
-    if (!str) return 0
-    if (/^\d+$/.test(str)) return parseInt(str)
-    const parts = str.split(':').map(Number)
-    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
-    if (parts.length === 2) return parts[0] * 60 + parts[1]
-    return 0
-  } catch (e) { return 0 }
+// ============================================================
+// ⼯具函數：搜尋動畫
+// ============================================================
+async function searchAnime(keyword) {
+ try {
+ const res = await http.get('/play', {
+ params: { search: keyword }
+ })
+ const $ = cheerio.load(res.data)
+ const list = []
+ $('a[href*="/detail/"]').each((i, el) => {
+ const name = $(el).find('img').attr('alt') || $(el).text().trim()
+ if (name && name.includes(keyword)) {
+ const href = $(el).attr('href') || ''
+ const pic = $(el).find('img').attr('src') || ''
+ const slug = href.replace('/detail/', '').replace(/\/$/, '')
+ list.push({
+ vod_id: encodeURIComponent(slug),
+ vod_name: name,
+ vod_pic: pic.startsWith('http') ? pic : BASE_URL + pic,
+ vod_play_from: 'hkanime',
+ type_id: 4,
+ type_name: '動漫'
+ })
+ }
+ })
+ return list
+ } catch (err) {
+ console.error('searchAnime error:', err.message)
+ return []
+ }
 }
-
-// LibriVox API 返回書目列表
-async function fetchBooks(params, offset = 0, limit = 20) {
-  try {
-    const url = `${LV_API}?format=json&limit=${limit}&offset=${offset}&${params}`
-    const { data } = await $fetch.get(url, { headers })
-    const books = argsify(data)?.books ?? []
-    return books.map(book => {
-      try {
-        const id = `${book.id}`
-        const authors = (book.authors ?? []).map(a => `${a.first_name} ${a.last_name}`.trim()).join(', ')
-        const cover = book.coverart_thumbnail
-          ? book.coverart_thumbnail.replace('_thumbnail', '')
-          : 'https://librivox.org/images/logo.png'
-        return {
-          id,
-          name: book.title ?? '',
-          cover,
-          artist: { id, name: authors },
-          ext: {
-            bid: id,
-            url_rss: book.url_rss ?? '',
-            description: (book.description ?? '').replace(/<[^>]+>/g, '').slice(0, 300),
-            language: book.language ?? '',
-            totaltime: book.totaltime ?? '',
-          }
-        }
-      } catch (e) { return null }
-    }).filter(Boolean)
-  } catch (e) { return [] }
-}
-
-// 用 RSS 取章節列表
-async function fetchChapters(rssUrl, bookCover, bookName) {
-  try {
-    const { data } = await $fetch.get(rssUrl, { headers })
-    const $ = cheerio.load(data, { xmlMode: true })
-    const podcastCover = $('channel > image > url').first().text()
-      || $('itunes\\:image').first().attr('href')
-      || bookCover
-
-    const chapters = []
-    $('item').each((i, el) => {
-      try {
-        const ele = $(el)
-        const audioUrl = ele.find('enclosure').attr('url') ?? ''
-        if (!audioUrl) return
-        chapters.push({
-          id: ele.find('guid').text() || audioUrl,
-          name: ele.find('title').text() || `Chapter ${i + 1}`,
-          cover: podcastCover,
-          duration: parseDuration(ele.find('itunes\\:duration').text()),
-          artist: { id: bookName, name: bookName, cover: podcastCover },
-          ext: {
-            pid: audioUrl,
-            description: (ele.find('description').text() || '').replace(/<[^>]+>/g, '').slice(0, 300),
-            pubDate: ele.find('pubDate').text() || '',
-          }
-        })
-      } catch (e) {}
-    })
-    return chapters
-  } catch (e) { return [] }
-}
-
-async function getPlaylists(ext) {
-  try {
-    const { page, gid } = argsify(ext)
-    const offset = (page - 1) * 20
-    const genre = GENRES.find(g => g.id === gid)
-    if (!genre) return jsonify({ list: [] })
-    const books = await fetchBooks(genre.params, offset)
-    return jsonify({ list: books })
-  } catch (e) { return jsonify({ list: [] }) }
-}
-
-async function getSongs(ext) {
-  try {
-    const { page, bid, url_rss, name } = argsify(ext)
-    if (page > 1 || !bid) return jsonify({ list: [] })
-
-    let rssUrl = url_rss ?? ''
-
-    // 如果 ext 沒有 url_rss，用 API 查
-    if (!rssUrl) {
-      try {
-        const { data } = await $fetch.get(
-          `${LV_API}?id=${bid}&format=json`,
-          { headers }
-        )
-        rssUrl = argsify(data)?.books?.[0]?.url_rss ?? ''
-      } catch (e) { rssUrl = '' }
-    }
-
-    if (!rssUrl) return jsonify({ list: [] })
-
-    const chapters = await fetchChapters(rssUrl, '', name ?? '')
-    return jsonify({ list: chapters })
-  } catch (e) { return jsonify({ list: [] }) }
-}
-
-async function getSongInfo(ext) {
-  try {
-    const { pid, description, pubDate } = argsify(ext)
-    if (!pid) return jsonify({ urls: [] })
-    return jsonify({
-      urls: [pid],
-      lyric: [pubDate ? `📅 ${pubDate}` : '', '', description ?? ''].filter(Boolean).join('\n'),
-    })
-  } catch (e) { return jsonify({ urls: [] }) }
-}
-
-async function search(ext) {
-  try {
-    const { text, page, type } = argsify(ext)
-    if (!text || page > 3) return jsonify({ list: [] })
-    const offset = (page - 1) * 20
-
-    let params = ''
-    if (type === 'author') {
-      params = `author=${encodeURIComponent(text)}`
-    } else {
-      // 書名搜索 — LibriVox 支援部分匹配
-      params = `title=${encodeURIComponent(text)}`
-    }
-
-    const books = await fetchBooks(params, offset)
-    return jsonify({ list: books })
-  } catch (e) { return jsonify({ list: [] }) }
-}
-
-async function getAlbums(ext) { return jsonify({ list: [] }) }
-async function getArtists(ext) { return jsonify({ list: [] }) }
+// ============================================================
+// 主要 API 路由（T4 標準格式）
+// JSTV 會呼叫：
+// ?ac=list → 列表
+// ?ac=detail&ids=X → 詳情
+// ?wd=關鍵字 → 搜尋
+// ============================================================
+app.get('/api.php/provide/vod/', async (req, res) => {
+ const { ac, ids, wd, pg = 1 } = req.query
+ res.setHeader('Content-Type', 'application/json; charset=utf-8')
+ res.setHeader('Access-Control-Allow-Origin', '*')
+ try {
+ // ---------- 搜尋 ----------
+ if (wd) {
+ const list = await searchAnime(wd)
+ return res.json({
+ code: 1,
+ msg: '搜尋結果',
+ page: 1,
+ pagecount: 1,
+ limit: list.length,
+ total: list.length,
+ list
+ })
+ }
+ // ---------- 詳情 ----------
+ if (ac === 'detail' && ids) {
+ const idList = ids.split(',')
+ const details = []
+ for (const id of idList) {
+ const detail = await fetchAnimeDetail(id)
+ if (detail) details.push(detail)
+ }
+ return res.json({
+ code: 1,
+ msg: '影片詳情',
+ page: 1,
+ pagecount: 1,
+ limit: details.length,
+ total: details.length,
+ list: details
+ })
+ }
+ // ---------- 列表（預設）----------
+ if (ac === 'list' || !ac) {
+ const list = await fetchAnimeList(pg)
+ return res.json({
+ code: 1,
+ msg: '數據列表',
+ page: parseInt(pg),
+ pagecount: 1,
+ limit: list.length,
+ total: list.length,
+ list
+ })
+ }
+ // 未知請求
+ return res.json({ code: 0, msg: '無效請求', list: [] })
+ } catch (err) {
+ console.error('API error:', err.message)
+ return res.json({ code: 0, msg: '伺服器錯誤', list: [] })
+ }
+})
+// 根路徑健康檢查（Render 需要）
+app.get('/', (req, res) => {
+ res.send('HKanime T4 API 運⾏中 ')
+})
+app.listen(PORT, () => {
+ console.log(` HKanime API 已啟動：http://localhost:${PORT}`)
+ console.log(` T4 端點：http://localhost:${PORT}/api.php/provide/vod/`)
+})
